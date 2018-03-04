@@ -7,12 +7,10 @@ import brave.http.HttpServerHandler;
 import brave.http.HttpTracing;
 import brave.propagation.Propagation.Getter;
 import brave.propagation.TraceContext;
-import java.util.List;
 import javax.inject.Inject;
 import javax.ws.rs.ext.Provider;
 import org.glassfish.jersey.server.ContainerRequest;
 import org.glassfish.jersey.server.ContainerResponse;
-import org.glassfish.jersey.server.ExtendedUriInfo;
 import org.glassfish.jersey.server.ManagedAsync;
 import org.glassfish.jersey.server.internal.routing.RoutingContext;
 import org.glassfish.jersey.server.monitoring.ApplicationEvent;
@@ -91,30 +89,7 @@ public final class TracingApplicationEventListener implements ApplicationEventLi
      * This code skips redundant slashes from either source caused by Path("/") or Path("").
      */
     @Override public String route(ContainerResponse response) {
-      ExtendedUriInfo uriInfo = response.getRequestContext().getUriInfo();
-      List<UriTemplate> templates = uriInfo.getMatchedTemplates();
-      int templateCount = templates.size();
-      if (templateCount == 0) return "";
-      assert templateCount % 2 == 0 : "expected matched templates to be resource/method pairs";
-      StringBuilder builder = null; // don't allocate unless you need it!
-      String basePath = uriInfo.getBaseUri().getPath();
-      String result = null;
-      if (!"/".equals(basePath)) { // skip empty base paths
-        result = basePath;
-      }
-      for (int i = templateCount - 1; i >= 0; i--) {
-        String template = templates.get(i).getTemplate();
-        if ("/".equals(template)) continue; // skip allocation
-        if (builder != null) {
-          builder.append(template);
-        } else if (result != null) {
-          builder = new StringBuilder(result).append(template);
-          result = null;
-        } else {
-          result = template;
-        }
-      }
-      return result != null ? result : builder != null ? builder.toString() : "";
+      return (String) response.getRequestContext().getProperty("http.route");
     }
 
     @Override public Integer statusCode(ContainerResponse response) {
@@ -130,11 +105,12 @@ public final class TracingApplicationEventListener implements ApplicationEventLi
     // HttpServletRequest.getRemoteAddr
   }
 
-  class TracingRequestEventListener implements RequestEventListener {
+  class TracingRequestEventListener extends TaggingApplicationEventListener {
     final Span span;
     Tracer.SpanInScope spanInScope; // only mutated when this is a synchronous method
 
     TracingRequestEventListener(Span span, Tracer.SpanInScope spanInScope) {
+      super(span);
       this.span = span;
       this.spanInScope = spanInScope;
     }
@@ -145,6 +121,7 @@ public final class TracingApplicationEventListener implements ApplicationEventLi
      * worst case: the span is only visible until request filters complete.
      */
     @Override public void onEvent(RequestEvent event) {
+      super.onEvent(event);
       // Note: until REQUEST_MATCHED, we don't know metadata such as if the request is async or not
       switch (event.getType()) {
         case REQUEST_FILTERED:

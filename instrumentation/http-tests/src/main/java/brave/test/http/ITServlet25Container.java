@@ -4,8 +4,6 @@ import brave.Tracer;
 import brave.http.HttpTracing;
 import brave.propagation.ExtraFieldPropagation;
 import java.io.IOException;
-import java.util.EnumSet;
-import javax.servlet.DispatcherType;
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
@@ -20,6 +18,7 @@ import okhttp3.Response;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.junit.Test;
+import zipkin2.Span;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -95,6 +94,36 @@ public abstract class ITServlet25Container extends ITServletContainer {
     takeSpan();
   }
 
+  // Shows how a framework can layer on "http.route" logic
+  Filter customHttpRoute = new Filter() {
+    @Override public void init(FilterConfig filterConfig) {
+    }
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+        throws IOException, ServletException {
+      request.setAttribute("http.route", ((HttpServletRequest) request).getRequestURI());
+      chain.doFilter(request, response);
+    }
+
+    @Override public void destroy() {
+    }
+  };
+
+  /**
+   * Shows that by adding the request attribute "http.route" a layered framework can influence
+   * any derived from the route, including the span name.
+   */
+  @Test public void canSetCustomRoute() throws Exception {
+    get("/foo");
+
+    Span span = takeSpan();
+    if (!span.name().equals("get")) {
+      assertThat(span.name())
+          .isEqualTo("get /foo");
+    }
+  }
+
   @Override
   public void init(ServletContextHandler handler) {
     // add servlets for the test resource
@@ -106,14 +135,13 @@ public abstract class ITServlet25Container extends ITServletContainer {
     handler.addServlet(new ServletHolder(new ExceptionServlet()), "/exception");
 
     // add the trace filter
-    handler.getServletContext()
-        .addFilter("tracingFilter", newTracingFilter())
-        .addMappingForUrlPatterns(EnumSet.allOf(DispatcherType.class), true, "/*");
-
-    handler.getServletContext()
-        .addFilter("userFilter", userFilter)
-        .addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST), true, "/*");
+    addFilter(handler, newTracingFilter());
+    // add a user filter
+    addFilter(handler, userFilter);
   }
 
   protected abstract Filter newTracingFilter();
+
+  // abstract because filter registration types were not introduced until servlet 3.0
+  protected abstract void addFilter(ServletContextHandler handler, Filter filter);
 }

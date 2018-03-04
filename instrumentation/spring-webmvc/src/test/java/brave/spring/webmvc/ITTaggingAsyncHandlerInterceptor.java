@@ -1,10 +1,13 @@
 package brave.spring.webmvc;
 
+import brave.CurrentSpanCustomizer;
 import brave.http.HttpTracing;
+import brave.servlet.TracingFilter;
 import brave.test.http.ITServletContainer;
+import java.util.EnumSet;
+import javax.servlet.DispatcherType;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
-import org.junit.AssumptionViolatedException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.context.annotation.Bean;
@@ -16,25 +19,24 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurerAdapter;
 
-public class ITTracingAsyncHandlerInterceptor extends ITServletContainer {
-
-  @Override public void notFound(){
-    throw new AssumptionViolatedException("TODO: can MVC handle not found?");
-  }
+/** This tests when you use servlet for tracing but MVC for tagging */
+public class ITTaggingAsyncHandlerInterceptor extends ITServletContainer {
 
   @Configuration
   @EnableWebMvc
   static class TracingConfig extends WebMvcConfigurerAdapter {
-    @Bean AsyncHandlerInterceptor tracingInterceptor(HttpTracing httpTracing) {
-      return TracingAsyncHandlerInterceptor.create(httpTracing);
+    @Bean AsyncHandlerInterceptor taggingInterceptor(HttpTracing httpTracing) {
+      return TaggingAsyncHandlerInterceptor.create(
+          CurrentSpanCustomizer.create(httpTracing.tracing())
+      );
     }
 
     @Autowired
-    private AsyncHandlerInterceptor tracingInterceptor;
+    private AsyncHandlerInterceptor taggingInterceptor;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-      registry.addInterceptor(tracingInterceptor);
+      registry.addInterceptor(taggingInterceptor);
     }
   }
 
@@ -54,5 +56,10 @@ public class ITTracingAsyncHandlerInterceptor extends ITServletContainer {
     DispatcherServlet servlet = new DispatcherServlet(appContext);
     servlet.setDispatchOptionsRequest(true);
     handler.addServlet(new ServletHolder(servlet), "/*");
+
+    // add the trace filter
+    handler.getServletContext()
+        .addFilter("tracingFilter", TracingFilter.create(httpTracing))
+        .addMappingForUrlPatterns(EnumSet.allOf(DispatcherType.class), true, "/*");
   }
 }
